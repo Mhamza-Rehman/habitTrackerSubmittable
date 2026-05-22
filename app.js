@@ -50,6 +50,15 @@ function sanitizeHabitText(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function escapeHtml(value) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function generateHabitId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -167,6 +176,8 @@ function renderTableBody(weekDates) {
 
   const rows = state.habits
     .map((habit) => {
+      const currentStreak = calculateCurrentStreak(habit.id);
+      const safeHabitName = escapeHtml(habit.name);
       const dayCells = weekDates
         .map((date, index) => {
           const dateKey = date.toISOString().slice(0, 10);
@@ -175,18 +186,27 @@ function renderTableBody(weekDates) {
           return `
             <td>
               <label class="check-control" for="${checkboxId}">
-                <input class="check-input" type="checkbox" id="${checkboxId}" data-habit-id="${habit.id}" data-date="${dateKey}" ${
+                <input class="check-input" type="checkbox" id="${checkboxId}" data-habit-id="${habit.id}" data-date="${dateKey}" onchange="handleHabitToggle(event)" ${
             completed ? "checked" : ""
           } />
                 <span class="check-box" aria-hidden="true"></span>
-                <span class="sr-only">Mark ${habit.name} ${DAY_LABELS[index]}</span>
+                <span class="sr-only">Mark ${safeHabitName} ${DAY_LABELS[index]}</span>
               </label>
             </td>
           `;
         })
         .join("");
 
-      return `<tr><td>${habit.name}</td>${dayCells}</tr>`;
+      return `
+        <tr>
+          <td>
+            <button type="button" class="habit-title-btn" onclick="handleRenameHabit('${habit.id}')">${safeHabitName}</button>
+            <span class="streak-pill" aria-label="Current streak">${currentStreak} day${currentStreak === 1 ? "" : "s"}</span>
+            <button type="button" class="row-delete-btn" onclick="handleDeleteHabit('${habit.id}')" aria-label="Delete ${safeHabitName}">Delete</button>
+          </td>
+          ${dayCells}
+        </tr>
+      `;
     })
     .join("");
 
@@ -202,11 +222,17 @@ function renderWeekRangeLabel(weekDates) {
 
 function renderEmptyState() {
   const emptyState = document.getElementById("emptyState");
+  const gridScroll = document.querySelector(".grid-scroll");
   if (!emptyState) {
     return;
   }
 
-  emptyState.hidden = state.habits.length > 0;
+  const hasHabits = state.habits.length > 0;
+  emptyState.hidden = hasHabits;
+
+  if (gridScroll) {
+    gridScroll.hidden = !hasHabits;
+  }
 }
 
 function render() {
@@ -217,6 +243,106 @@ function render() {
   renderTableHeader(weekDates);
   renderTableBody(weekDates);
   renderEmptyState();
+}
+
+function removeHabitFromHistory(habitId) {
+  Object.keys(state.history).forEach((dateKey) => {
+    if (!state.history[dateKey] || typeof state.history[dateKey] !== "object") {
+      return;
+    }
+
+    delete state.history[dateKey][habitId];
+
+    if (Object.keys(state.history[dateKey]).length === 0) {
+      delete state.history[dateKey];
+    }
+  });
+}
+
+function isHabitDoneOnDate(habitId, date) {
+  const dateKey = date.toISOString().slice(0, 10);
+  return Boolean(state.history?.[dateKey]?.[habitId]);
+}
+
+function countBackwardStreak(habitId, startDate) {
+  let streak = 0;
+  let cursor = toDateOnly(startDate);
+
+  while (isHabitDoneOnDate(habitId, cursor)) {
+    streak += 1;
+    cursor = addDays(cursor, -1);
+  }
+
+  return streak;
+}
+
+function calculateCurrentStreak(habitId) {
+  const today = getTodayAtMidnight();
+  const yesterday = addDays(today, -1);
+
+  if (isHabitDoneOnDate(habitId, today)) {
+    return countBackwardStreak(habitId, today);
+  }
+
+  if (isHabitDoneOnDate(habitId, yesterday)) {
+    return countBackwardStreak(habitId, yesterday);
+  }
+
+  return 0;
+}
+
+function handleHabitToggle(event) {
+  const checkbox = event.target;
+  const habitId = checkbox.dataset.habitId;
+  const dateKey = checkbox.dataset.date;
+
+  if (!habitId || !dateKey) {
+    return;
+  }
+
+  if (!state.history[dateKey]) {
+    state.history[dateKey] = {};
+  }
+
+  if (checkbox.checked) {
+    state.history[dateKey][habitId] = true;
+  } else {
+    delete state.history[dateKey][habitId];
+    if (Object.keys(state.history[dateKey]).length === 0) {
+      delete state.history[dateKey];
+    }
+  }
+
+  saveStateToStorage();
+  render();
+}
+
+function handleDeleteHabit(habitId) {
+  state.habits = state.habits.filter((habit) => habit.id !== habitId);
+  removeHabitFromHistory(habitId);
+  saveStateToStorage();
+  render();
+}
+
+function handleRenameHabit(habitId) {
+  const habit = state.habits.find((item) => item.id === habitId);
+  if (!habit) {
+    return;
+  }
+
+  const nextName = window.prompt("Rename habit", habit.name);
+  if (nextName === null) {
+    return;
+  }
+
+  const sanitizedName = sanitizeHabitText(nextName);
+  if (!sanitizedName) {
+    return;
+  }
+
+  habit.name = sanitizedName;
+  saveStateToStorage();
+  render();
 }
 
 function handlePreviousWeek() {
@@ -236,6 +362,9 @@ function handleThisWeek() {
 
 function initializeHabitDataLayer() {
   loadStateFromStorage();
+  window.handleHabitToggle = handleHabitToggle;
+  window.handleDeleteHabit = handleDeleteHabit;
+  window.handleRenameHabit = handleRenameHabit;
 
   const habitForm = document.getElementById("habitForm");
   if (habitForm) {
