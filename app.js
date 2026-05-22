@@ -9,9 +9,41 @@ const state = {
   currentAnchorDate: getTodayAtMidnight(),
 };
 
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
 function getTodayAtMidnight() {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function toDateOnly(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date, daysToAdd) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + daysToAdd);
+  return next;
+}
+
+function isSameDate(a, b) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function getMondayOfDateWeek(targetDate) {
+  const date = toDateOnly(targetDate);
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDays(date, offset);
+}
+
+function generateWeeklyDateArray(mondayDate) {
+  const monday = toDateOnly(mondayDate);
+  return Array.from({ length: 7 }, (_, index) => addDays(monday, index));
 }
 
 function sanitizeHabitText(value) {
@@ -84,6 +116,122 @@ function handleHabitFormSubmit(event) {
   state.habits.push(newHabit);
   saveStateToStorage();
   input.value = "";
+  render();
+}
+
+function formatWeekRange(weekDates) {
+  const start = weekDates[0];
+  const end = weekDates[6];
+  const dateFormat = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  const endFormat = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `${dateFormat.format(start)} - ${endFormat.format(end)}`;
+}
+
+function renderTableHeader(weekDates) {
+  const thead = document.querySelector(".habit-grid thead");
+  if (!thead) {
+    return;
+  }
+
+  const today = getTodayAtMidnight();
+  const todayInWeek = weekDates.some((date) => isSameDate(date, today));
+
+  const columns = weekDates
+    .map((date, index) => {
+      const isToday = todayInWeek && isSameDate(date, today);
+      const className = isToday ? ' class="is-today"' : "";
+      return `<th scope="col"${className}>${DAY_LABELS[index]} ${date.getDate()}</th>`;
+    })
+    .join("");
+
+  thead.innerHTML = `<tr><th scope="col">Habit</th>${columns}</tr>`;
+}
+
+function renderTableBody(weekDates) {
+  const tbody = document.querySelector(".habit-grid tbody");
+  if (!tbody) {
+    return;
+  }
+
+  if (state.habits.length === 0) {
+    tbody.innerHTML = "";
+    return;
+  }
+
+  const rows = state.habits
+    .map((habit) => {
+      const dayCells = weekDates
+        .map((date, index) => {
+          const dateKey = date.toISOString().slice(0, 10);
+          const checkboxId = `check_${habit.id}_${dateKey}`;
+          const completed = Boolean(state.history?.[dateKey]?.[habit.id]);
+          return `
+            <td>
+              <label class="check-control" for="${checkboxId}">
+                <input class="check-input" type="checkbox" id="${checkboxId}" data-habit-id="${habit.id}" data-date="${dateKey}" ${
+            completed ? "checked" : ""
+          } />
+                <span class="check-box" aria-hidden="true"></span>
+                <span class="sr-only">Mark ${habit.name} ${DAY_LABELS[index]}</span>
+              </label>
+            </td>
+          `;
+        })
+        .join("");
+
+      return `<tr><td>${habit.name}</td>${dayCells}</tr>`;
+    })
+    .join("");
+
+  tbody.innerHTML = rows;
+}
+
+function renderWeekRangeLabel(weekDates) {
+  const weekRangeEl = document.querySelector(".week-range");
+  if (weekRangeEl) {
+    weekRangeEl.textContent = formatWeekRange(weekDates);
+  }
+}
+
+function renderEmptyState() {
+  const emptyState = document.getElementById("emptyState");
+  if (!emptyState) {
+    return;
+  }
+
+  emptyState.hidden = state.habits.length > 0;
+}
+
+function render() {
+  const monday = getMondayOfDateWeek(state.currentAnchorDate);
+  const weekDates = generateWeeklyDateArray(monday);
+
+  renderWeekRangeLabel(weekDates);
+  renderTableHeader(weekDates);
+  renderTableBody(weekDates);
+  renderEmptyState();
+}
+
+function handlePreviousWeek() {
+  state.currentAnchorDate = addDays(state.currentAnchorDate, -7);
+  render();
+}
+
+function handleNextWeek() {
+  state.currentAnchorDate = addDays(state.currentAnchorDate, 7);
+  render();
+}
+
+function handleThisWeek() {
+  state.currentAnchorDate = getTodayAtMidnight();
+  render();
 }
 
 function initializeHabitDataLayer() {
@@ -93,6 +241,24 @@ function initializeHabitDataLayer() {
   if (habitForm) {
     habitForm.addEventListener("submit", handleHabitFormSubmit);
   }
+
+  const prevWeekBtn = document.getElementById("prevWeekBtn");
+  const nextWeekBtn = document.getElementById("nextWeekBtn");
+  const thisWeekBtn = document.getElementById("thisWeekBtn");
+
+  if (prevWeekBtn) {
+    prevWeekBtn.addEventListener("click", handlePreviousWeek);
+  }
+
+  if (nextWeekBtn) {
+    nextWeekBtn.addEventListener("click", handleNextWeek);
+  }
+
+  if (thisWeekBtn) {
+    thisWeekBtn.addEventListener("click", handleThisWeek);
+  }
+
+  render();
 }
 
 initializeHabitDataLayer();

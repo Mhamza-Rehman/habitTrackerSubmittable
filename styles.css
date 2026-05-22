@@ -203,6 +203,10 @@ body {
   font-weight: 700;
 }
 
+.habit-grid th.is-today {
+  color: var(--color-success-600);
+}
+
 .habit-grid tbody tr:last-child td {
   border-bottom: 0;
 }
